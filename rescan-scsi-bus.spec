@@ -1,4 +1,5 @@
 Summary:	Rescan SCSI bus in Linux
+Summary(pl.UTF-8):	Ponowne skanowanie szyny SCSI pod Linuksem
 Name:		rescan-scsi-bus
 Version:	1.24
 Release:	1
@@ -12,14 +13,32 @@ BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
 %description
 Linux allows you to add and remove SCSI devices without rebooting by
-using the echo "scsi add-single-device H C I L" > /proc/scsi/scsi
+using the
+
+echo "scsi add-single-device H C I L" > /proc/scsi/scsi
+
 command (H = host, C = channel, I = SCSI ID, L = SCSI LUN). The
 remove-single-device command works similarily.
 
 Note, however, that the SCSI bus was NOT designed for hot-plugging, so
-you might be out of luck ... And you have to be sure, that termination
+you might be out of luck... And you have to be sure, that termination
 is OK. All filesystems on a device have to be unmounted before
 disconnecting it or powering it down.
+
+%description -l pl.UTF-8
+Linux pozwala dodawać i usuwać urządzenia SCSI bez rebootowania
+systemu za pomocą polecenia
+
+echo "scsi add-single-device H C I L" > /proc/scsi/scsi
+
+(H = host, C = kanał, I = SCSI ID, L = SCSI LUN). Polecenie
+remove-single-device działa podobnie.
+
+Jednak należy zauważyć, że szyna SCSI nie została zaprojektowana do
+podłączania urządzeń w locie, więc można mieć pecha... Dodatkowo
+trzeba być pewnym, że terminacja jest prawidłowa. Wszystkie systemy
+plików na urządzeniu muszą być odmontowane przed jego odłączeniem lub
+wyłączeniem.
 
 %prep
 %setup -q -c -T
