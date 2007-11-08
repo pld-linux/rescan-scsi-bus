@@ -2,7 +2,7 @@ Summary:	Rescan SCSI bus in Linux
 Summary(pl.UTF-8):	Ponowne skanowanie szyny SCSI pod Linuksem
 Name:		rescan-scsi-bus
 Version:	1.24
-Release:	1
+Release:	2
 License:	GPL
 Group:		Applications
 Source0:	http://www.garloff.de/kurt/linux/%{name}.sh
