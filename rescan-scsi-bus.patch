@@ -1,0 +1,11 @@
+--- ./rescan-scsi-bus.sh	2007-11-13 15:53:06.000000000 +0200
++++ ./rescan-scsi-bus.sh	2008-02-13 20:13:21.190013256 +0200
+@@ -259,7 +259,7 @@
+ # Returns the list of existing LUNs
+ getluns ()
+ {
+-  if test ! -x /usr/bin/sg_luns; then return ""; fi
++  if test ! -x /usr/bin/sg_luns; then return; fi
+   sgdevice
+   if test -z "$SGDEV"; then return ""; fi
+   sg_luns -d /dev/$SGDEV | sed -n 's/.*lun=\(.*\)/\1/p'
