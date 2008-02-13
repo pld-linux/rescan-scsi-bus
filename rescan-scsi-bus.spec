@@ -6,6 +6,7 @@ Release:	0.1
 License:	GPL
 Group:		Applications
 Source0:	%{name}.sh
+Patch0:		%{name}.patch
 URL:		http://www.garloff.de/kurt/linux/
 BuildArch:	noarch
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
@@ -41,12 +42,13 @@ wyłączeniem.
 
 %prep
 %setup -q -c -T
-install %{SOURCE0} %{name}
+install %{SOURCE0} .
+%patch0 -p1
 
 %install
 rm -rf $RPM_BUILD_ROOT
 install -d $RPM_BUILD_ROOT%{_sbindir}
-install %{name} $RPM_BUILD_ROOT%{_sbindir}
+install %{name}.sh $RPM_BUILD_ROOT%{_sbindir}/%{name}
 
 %clean
 rm -rf $RPM_BUILD_ROOT
