@@ -10,6 +10,7 @@ Source0:	%{name}.sh
 Patch0:		%{name}.patch
 URL:		http://www.garloff.de/kurt/linux/
 Requires:	sg3_utils
+Obsoletes:	scsiutils
 BuildArch:	noarch
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
