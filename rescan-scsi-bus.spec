@@ -4,10 +4,12 @@ Name:		rescan-scsi-bus
 Version:	1.25
 Release:	0.1
 License:	GPL
-Group:		Applications
+Group:		Applications/System
+# http://www.garloff.de/kurt/linux/rescan-scsi-bus.sh (with changed CVS tag)
 Source0:	%{name}.sh
 Patch0:		%{name}.patch
 URL:		http://www.garloff.de/kurt/linux/
+Requires:	sg3_utils
 BuildArch:	noarch
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
