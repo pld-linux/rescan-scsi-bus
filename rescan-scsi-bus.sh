@@ -27,11 +27,11 @@ findhosts_26 ()
   for hostdir in /sys/class/scsi_host/host*; do
     hostno=${hostdir#/sys/class/scsi_host/host}
     if [ -f $hostdir/isp_name ] ; then
-	hostname="qla2xxx"
+      hostname="qla2xxx"
     elif [ -f $hostdir/lpfc_drvr_version ] ; then
-	hostname="lpfc"
+      hostname="lpfc"
     else
-        hostname=`cat $hostdir/proc_name`
+      hostname=`cat $hostdir/proc_name`
     fi
     hosts="$hosts $hostno"
     echo "Host adapter $hostno ($hostname) found."
@@ -67,26 +67,26 @@ findhosts ()
 
 printtype ()
 {
-    local type=$1
+  local type=$1
 
-    case "$type" in
-	0) echo "Direct-Access    " ;;
-	1) echo "Sequential-Access" ;;
-	2) echo "Printer          " ;;
-	3) echo "Processor        " ;;
-	4) echo "WORM             " ;;
-	5) echo "CD-ROM           " ;;
-	6) echo "Scanner          " ;;
-	7) echo "Optical Device   " ;;
-	8) echo "Medium Changer   " ;;
-	9) echo "Communications   " ;;
-	10) echo "Unknown          " ;;
-	11) echo "Unknown          " ;;
-	12) echo "RAID             " ;;
-	13) echo "Enclosure        " ;;
-	14) echo "Direct-Access-RBC" ;;
-	*) echo "Unknown          " ;;
-    esac
+  case "$type" in
+    0) echo "Direct-Access    " ;;
+    1) echo "Sequential-Access" ;;
+    2) echo "Printer          " ;;
+    3) echo "Processor        " ;;
+    4) echo "WORM             " ;;
+    5) echo "CD-ROM           " ;;
+    6) echo "Scanner          " ;;
+    7) echo "Optical Device   " ;;
+    8) echo "Medium Changer   " ;;
+    9) echo "Communications   " ;;
+    10) echo "Unknown          " ;;
+    11) echo "Unknown          " ;;
+    12) echo "RAID             " ;;
+    13) echo "Enclosure        " ;;
+    14) echo "Direct-Access-RBC" ;;
+    *) echo "Unknown          " ;;
+  esac
 }
 
 print02i()
@@ -108,31 +108,31 @@ procscsiscsi ()
   ID=`print02i "$id"`
   LUN=`print02i "$lun"`
   if [ -d /sys/class/scsi_device ]; then
-      SCSIPATH="/sys/class/scsi_device/${host}:${channel}:${id}:${lun}"
-      if [ -d  "$SCSIPATH" ] ; then
-	  SCSISTR="Host: scsi${host} Channel: $CHANNEL Id: $ID Lun: $LUN"
-	  if [ "$LN" -gt 0 ] ; then
-	      IVEND=$(cat ${SCSIPATH}/device/vendor)
-	      IPROD=$(cat ${SCSIPATH}/device/model)
-	      IPREV=$(cat ${SCSIPATH}/device/rev)
-	      SCSIDEV=$(printf '  Vendor: %-08s Model: %-16s Rev: %-4s' "$IVEND" "$IPROD" "$IPREV")
-	      SCSISTR="$SCSISTR
+    SCSIPATH="/sys/class/scsi_device/${host}:${channel}:${id}:${lun}"
+    if [ -d  "$SCSIPATH" ] ; then
+      SCSISTR="Host: scsi${host} Channel: $CHANNEL Id: $ID Lun: $LUN"
+      if [ "$LN" -gt 0 ] ; then
+	IVEND=$(cat ${SCSIPATH}/device/vendor)
+	IPROD=$(cat ${SCSIPATH}/device/model)
+	IPREV=$(cat ${SCSIPATH}/device/rev)
+	SCSIDEV=$(printf '  Vendor: %-08s Model: %-16s Rev: %-4s' "$IVEND" "$IPROD" "$IPREV")
+	SCSISTR="$SCSISTR
 $SCSIDEV"
-	  fi
-	  if [ "$LN" -gt 1 ] ; then
-	      ILVL=$(cat ${SCSIPATH}/device/scsi_level)
-	      type=$(cat ${SCSIPATH}/device/type)
-	      ITYPE=$(printtype $type)
-	      SCSITMP=$(printf '  Type:   %-16s                ANSI SCSI revision: %02d' "$ITYPE" "$((ILVL - 1))")
-	      SCSISTR="$SCSISTR
-$SCSITMP"
-	  fi
-      else
-	  return 1
       fi
+      if [ "$LN" -gt 1 ] ; then
+	ILVL=$(cat ${SCSIPATH}/device/scsi_level)
+	type=$(cat ${SCSIPATH}/device/type)
+	ITYPE=$(printtype $type)
+	SCSITMP=$(printf '  Type:   %-16s                ANSI SCSI revision: %02d' "$ITYPE" "$((ILVL - 1))")
+	SCSISTR="$SCSISTR
+$SCSITMP"
+      fi
+    else
+      return 1
+    fi
   else
-      grepstr="scsi$host Channel: $CHANNEL Id: $ID Lun: $LUN"
-      SCSISTR=`cat /proc/scsi/scsi | grep -A$LN -e"$grepstr"`
+    grepstr="scsi$host Channel: $CHANNEL Id: $ID Lun: $LUN"
+    SCSISTR=`cat /proc/scsi/scsi | grep -A$LN -e"$grepstr"`
   fi
   if test -z "$SCSISTR"; then return 1; else return 0; fi
 }
@@ -185,7 +185,7 @@ sgdevice ()
       echo "scsi report-devs 0" >/proc/scsi/scsi
     fi
   fi
-}       
+}
 
 # Test if SCSI device is still responding to commands
 testonline ()
@@ -197,6 +197,14 @@ testonline ()
   if test -z "$SGDEV"; then return 0; fi
   sg_turs /dev/$SGDEV >/dev/null 2>&1
   RC=$?
+  # Handle in progress of becoming ready and unit attention -- wait at max 11s
+  declare -i ctr=0
+  while test $RC = 2 -o $RC = 6 && test $ctr -le 10; do
+    if test $RC = 2; then sleep 1; fi
+    let ctr+=1
+    sg_turs /dev/$SGDEV >/dev/null 2>&1
+    RC=$?
+  done
   # echo -e "\e[A\e[A\e[A${yellow}Test existence of $SGDEV = $RC ${norm} \n\n\n"
   if test $RC = 1; then return $RC; fi
   # Reset RC (might be !=0 for passive paths)
@@ -305,6 +313,12 @@ getluns()
   echo "$LLUN" | sed -n 's/.*lun=\(.*\)/\1/p'
 }
 
+# Wait for udev to settle (create device nodes etc.)
+udevadm_settle()
+{
+  if test -x /sbin/udevadm; then /sbin/udevadm settle; fi
+}
+
 # Perform scan on a single lun $host $channel $id $lun
 dolunscan()
 {
@@ -335,6 +349,7 @@ dolunscan()
           # Try readding, should fail if device is gone
           echo "$channel $id $lun" > /sys/class/scsi_host/host${host}/scan
 	fi
+	udevadm_settle
       else
         echo "scsi remove-single-device $devnr" > /proc/scsi/scsi
 	if test $RC -eq 1 -o $lun -eq 0 ; then
@@ -346,6 +361,7 @@ dolunscan()
     if test $RC = 0 -o "$forcerescan" ; then
       if test -e /sys/class/scsi_device/${host}:${channel}:${id}:${lun}/device; then
         echo 1 > /sys/class/scsi_device/${host}:${channel}:${id}:${lun}/device/rescan
+	udevadm_settle
       fi
     fi
     printf "\r\x1b[A\x1b[A\x1b[A${yellow}OLD: $norm"
@@ -361,6 +377,7 @@ dolunscan()
     printf "\r${green}NEW: $norm"
     if test -e /sys/class/scsi_host/host${host}/scan; then
       echo "$channel $id $lun" > /sys/class/scsi_host/host${host}/scan 2> /dev/null
+      udevadm_settle
     else
       echo "scsi add-single-device $devnr" > /proc/scsi/scsi
     fi
@@ -394,16 +411,24 @@ doreportlun()
     #printf "\r${green}NEW: $norm"
     if test -e /sys/class/scsi_host/host${host}/scan; then
       echo "$channel $id $lun" > /sys/class/scsi_host/host${host}/scan 2> /dev/null
+      udevadm_settle
     else
       echo "scsi add-single-device $devnr" > /proc/scsi/scsi
     fi
     testexist -q
-    if test -z "$SCSISTR"; then
+    if test -n "$SCSISTR"; then
+      lun0added=1
+      #testonline
+    else
       # Device not present
-      return
+      # return
+      # Find alternative LUN to send getluns to
+      for dev in /sys/class/scsi_device/${host}:${channel}:${id}:*; do
+        [ -d "$dev" ] || continue
+	lun=${dev##*:}
+        break
+      done
     fi
-    lun0added=1
-    #testonline
   fi
   targetluns=`getluns`
   lunremove=
@@ -417,7 +442,7 @@ doreportlun()
     # OK, is existing $lun (still) in reported list
     for tmplun in $targetluns; do
       if test $tmplun -eq $lun ; then
-        inlist=1
+	inlist=1
 	dolunscan $lun0added
       else
 	newsearch="$newsearch $tmplun"
@@ -426,8 +451,8 @@ doreportlun()
     # OK, we have now done a lunscan on $lun and 
     # $newsearch is the old $targetluns without $lun
     if [ -z "$inlist" ]; then
-	# Stale lun
-	lunremove="$lunremove $lun"
+      # Stale lun
+      lunremove="$lunremove $lun"
     fi
     # $lun removed from $lunsearch (echo for whitespace cleanup)
     targetluns=`echo $newsearch`
@@ -462,23 +487,23 @@ dosearch ()
  
 expandlist ()
 {
-    list=$1
-    result=""
-    first=${list%%,*}
-    rest=${list#*,}
-    while test ! -z "$first"; do 
-	beg=${first%%-*};
-	if test "$beg" = "$first"; then
-	    result="$result $beg";
-    	else
-    	    end=${first#*-}
-	    result="$result `seq $beg $end`"
-	fi
-	test "$rest" = "$first" && rest=""
-	first=${rest%%,*}
-	rest=${rest#*,}
-    done
-    echo $result
+  list=$1
+  result=""
+  first=${list%%,*}
+  rest=${list#*,}
+  while test ! -z "$first"; do 
+    beg=${first%%-*};
+    if test "$beg" = "$first"; then
+      result="$result $beg";
+    else
+      end=${first#*-}
+      result="$result `seq $beg $end`"
+    fi
+    test "$rest" = "$first" && rest=""
+    first=${rest%%,*}
+    rest=${rest#*,}
+  done
+  echo $result
 }
 
 # main
@@ -592,6 +617,7 @@ for host in $hosts; do
     echo "- - -" > /sys/class/scsi_host/host$host/scan 2> /dev/null;
     channelsearch=
     idsearch=
+    udevadm_settle
   else
     channelsearch=$opt_channelsearch
     idsearch=$opt_idsearch
@@ -599,14 +625,14 @@ for host in $hosts; do
   [ -n "$channelsearch" ] && echo -n "channels $channelsearch "
   echo -n "for "
   if [ -n "$idsearch" ] ; then
-      echo -n " SCSI target IDs " $idsearch
+    echo -n " SCSI target IDs " $idsearch
   else
-      echo -n " all SCSI target IDs"
+    echo -n " all SCSI target IDs"
   fi
   if [ -n "$lunsearch" ] ; then
-      echo ", LUNs " $lunsearch
+    echo ", LUNs " $lunsearch
   else
-      echo ", all LUNs"
+    echo ", all LUNs"
   fi
   dosearch
 done
