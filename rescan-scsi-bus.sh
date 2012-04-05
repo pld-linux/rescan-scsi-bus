@@ -127,7 +127,6 @@ $SCSIDEV"
 	      SCSISTR="$SCSISTR
 $SCSITMP"
 	  fi
-	      
       else
 	  return 1
       fi
@@ -164,6 +163,7 @@ sgdevice24 ()
 }
 
 # Find sg device that belongs to SCSI device $host $channel $id $lun
+# and return in SGDEV
 sgdevice ()
 {
   SGDEV=
@@ -199,6 +199,8 @@ testonline ()
   RC=$?
   # echo -e "\e[A\e[A\e[A${yellow}Test existence of $SGDEV = $RC ${norm} \n\n\n"
   if test $RC = 1; then return $RC; fi
+  # Reset RC (might be !=0 for passive paths)
+  RC=0
   # OK, device online, compare INQUIRY string
   INQ=`sg_inq $sg_len_arg /dev/$SGDEV 2>/dev/null`
   IVEND=`echo "$INQ" | grep 'Vendor identification:' | sed 's/^[^:]*: \(.*\)$/\1/'`
@@ -208,7 +210,7 @@ testonline ()
   IPTYPE=`echo "$INQ" | sed -n 's/.* Device_type=\([0-9]*\) .*/\1/p'`
   IPQUAL=`echo "$INQ" | sed -n 's/ *PQual=\([0-9]*\)  Device.*/\1/p'`
   if [ "$IPQUAL" != 0 ] ; then
-    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nLU not available (PQual $IPQUAL)${norm}\n\n\n"
+    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}LU not available (PQual $IPQUAL)${norm}    \n\n\n"
     return 2
   fi
 
@@ -216,19 +218,20 @@ testonline ()
   procscsiscsi
   TMPSTR=`echo "$SCSISTR" | grep 'Vendor:'`
   if [ "$TMPSTR" != "$STR" ]; then
-    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${SCSISTR#* } \nto: $STR ${norm}\n\n\n"
+    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${SCSISTR#* } \nto: $STR ${norm} \n\n\n"
     return 1
   fi
   TMPSTR=`echo "$SCSISTR" | sed -n 's/.*Type: *\(.*\) *ANSI.*/\1/p'`
   if [ $TMPSTR != $TYPE ] ; then
-    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${TMPSTR} \nto: $TYPE ${norm}\n\n\n"
+    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${TMPSTR} \nto: $TYPE ${norm} \n\n\n"
     return 1
   fi
   return $RC
 }
 
 # Test if SCSI device $host $channen $id $lun exists
-# Outputs description from /proc/scsi/scsi, returns SCSISTR 
+# Outputs description from /proc/scsi/scsi (unless arg passed)
+# Returns SCSISTR (empty if no dev)
 testexist ()
 {
   : testexist
@@ -290,8 +293,9 @@ idlist ()
   done
 }
 
-# Returns the list of existing LUNs
-getluns ()
+# Returns the list of existing LUNs from device $host $channel $id $lun
+# and returns list to stdout
+getluns()
 {
   sgdevice
   if test -z "$SGDEV"; then return; fi
@@ -301,7 +305,7 @@ getluns ()
   echo "$LLUN" | sed -n 's/.*lun=\(.*\)/\1/p'
 }
 
-# Perform scan on a single lun
+# Perform scan on a single lun $host $channel $id $lun
 dolunscan()
 {
   SCSISTR=
@@ -309,6 +313,12 @@ dolunscan()
   echo "Scanning for device $devnr ..."
   printf "${yellow}OLD: $norm"
   testexist
+  # Special case: lun 0 just got added (for reportlunscan),
+  # so make sure we correctly treat it as new
+  if test "$lun" = "0" -a "$1"; then
+    SCSISTR=""
+    printf "\r\e[A\e[A\e[A"
+  fi
   : f $remove s $SCSISTR
   if test "$remove" -a "$SCSISTR"; then
     # Device exists: Test whether it's still online
@@ -368,14 +378,16 @@ dolunscan()
   fi
 }
 
-# Perform report lun scan
+# Perform report lun scan on $host $channel $id using REPORT_LUNS
 doreportlun()
 {
   lun=0
   SCSISTR=
   devnr="$host $channel $id $lun"
-  echo "Scanning for device $devnr ..."
+  echo -en "Scanning for device $devnr ...\r"
+  lun0added=
   #printf "${yellow}OLD: $norm"
+  # Phase one: If LUN0 does not exist, try to add
   testexist -q
   if test -z "$SCSISTR"; then
     # Device does not exist, try to add
@@ -385,42 +397,47 @@ doreportlun()
     else
       echo "scsi add-single-device $devnr" > /proc/scsi/scsi
     fi
-    testexist -1
+    testexist -q
     if test -z "$SCSISTR"; then
       # Device not present
-      printf "\r\x1b[A";
-      lunsearch=
       return
     fi
+    lun0added=1
     #testonline
   fi
-  lunsearch=`getluns`
+  targetluns=`getluns`
   lunremove=
+  #echo "getluns reports " $targetluns
   # Check existing luns
   for dev in /sys/class/scsi_device/${host}:${channel}:${id}:*; do
     [ -d "$dev" ] || continue
     lun=${dev##*:}
     newsearch=
-    oldsearch="$lunsearch"
-    for tmplun in $lunsearch; do
+    inlist=
+    # OK, is existing $lun (still) in reported list
+    for tmplun in $targetluns; do
       if test $tmplun -eq $lun ; then
-	dolunscan
+        inlist=1
+	dolunscan $lun0added
       else
 	newsearch="$newsearch $tmplun"
       fi
     done
-    if [ "${#oldsearch}" = "${#newsearch}" ] ; then
+    # OK, we have now done a lunscan on $lun and 
+    # $newsearch is the old $targetluns without $lun
+    if [ -z "$inlist" ]; then
 	# Stale lun
 	lunremove="$lunremove $lun"
     fi
-    lunsearch="$newsearch"
+    # $lun removed from $lunsearch (echo for whitespace cleanup)
+    targetluns=`echo $newsearch`
   done
   # Add new ones and check stale ones
-  for lun in $lunsearch $lunremove; do
-    dolunscan
+  for lun in $targetluns $lunremove; do
+    dolunscan $lun0added
   done
 }
-  
+
 # Perform search (scan $host)
 dosearch ()
 {
@@ -512,9 +529,9 @@ fi
 
 # defaults
 unsetcolor
-lunsearch=""
-idsearch=`seq 0 7`
-channelsearch=""
+lunsearch=
+opt_idsearch=`seq 0 7`
+opt_channelsearch=
 remove=
 forceremove=
 optscan=1
@@ -531,16 +548,16 @@ while test ! -z "$opt" -a -z "${opt##-*}"; do
   case "$opt" in
     l) lunsearch=`seq 0 7` ;;
     L) lunsearch=`seq 0 $2`; shift ;;
-    w) idsearch=`seq 0 15` ;;
-    c) channelsearch="0 1" ;;
+    w) opt_idsearch=`seq 0 15` ;;
+    c) opt_channelsearch="0 1" ;;
     r) remove=1 ;;
     i) lipreset=1 ;;
     -remove)      remove=1 ;;
     -forcerescan) remove=1; forcerescan=1 ;;
     -forceremove) remove=1; forceremove=1 ;;
     -hosts=*)     arg=${opt#-hosts=};   hosts=`expandlist $arg` ;;
-    -channels=*)  arg=${opt#-channels=};channelsearch=`expandlist $arg` ;; 
-    -ids=*)   arg=${opt#-ids=};         idsearch=`expandlist $arg` ;; 
+    -channels=*)  arg=${opt#-channels=};opt_channelsearch=`expandlist $arg` ;; 
+    -ids=*)   arg=${opt#-ids=};         opt_idsearch=`expandlist $arg` ;; 
     -luns=*)  arg=${opt#-luns=};        lunsearch=`expandlist $arg` ;; 
     -color) setcolor ;;
     -nooptscan) optscan=0 ;;
@@ -553,7 +570,7 @@ done
 
 # Hosts given ?
 if test "@$1" != "@"; then 
-  hosts=$*; 
+  hosts=$*
 fi
 
 if [ -d /sys/class/scsi_host -a ! -w /sys/class/scsi_host ]; then
@@ -570,10 +587,14 @@ for host in $hosts; do
     # It's pointless to do a target scan on FC
     if test -n "$lipreset" ; then
       echo 1 > /sys/class/fc_host/host$host/issue_lip 2> /dev/null;
-      echo "- - -" > /sys/class/scsi_host/host$host/scan 2> /dev/null;
     fi
-    channelsearch=""
-    idsearch=""
+    # Always trigger a rescan for FC to update channels and targets
+    echo "- - -" > /sys/class/scsi_host/host$host/scan 2> /dev/null;
+    channelsearch=
+    idsearch=
+  else
+    channelsearch=$opt_channelsearch
+    idsearch=$opt_idsearch
   fi
   [ -n "$channelsearch" ] && echo -n "channels $channelsearch "
   echo -n "for "
@@ -587,7 +608,7 @@ for host in $hosts; do
   else
       echo ", all LUNs"
   fi
-  dosearch; 
+  dosearch
 done
 echo "$found new device(s) found.               "
 echo "$rmvd device(s) removed.                 "
