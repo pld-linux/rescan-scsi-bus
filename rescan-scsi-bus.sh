@@ -24,10 +24,6 @@ unsetcolor ()
 findhosts_26 ()
 {
   hosts=
-  if ! ls /sys/class/scsi_host/host* >/dev/null 2>&1; then
-    echo "No SCSI host adapters found in sysfs"
-    exit 1;
-  fi 
   for hostdir in /sys/class/scsi_host/host*; do
     hostno=${hostdir#/sys/class/scsi_host/host}
     if [ -f $hostdir/isp_name ] ; then
@@ -39,7 +35,11 @@ findhosts_26 ()
     fi
     hosts="$hosts $hostno"
     echo "Host adapter $hostno ($hostname) found."
-  done
+  done  
+  if [ -z "$hosts" ] ; then
+    echo "No SCSI host adapters found in sysfs"
+    exit 1;
+  fi
   hosts=`echo $hosts | sed 's/ /\n/g' | sort -n`
 }
 
@@ -65,15 +65,48 @@ findhosts ()
   done
 }
 
+printtype ()
+{
+    local type=$1
+
+    case "$type" in
+	0) echo "Direct-Access    " ;;
+	1) echo "Sequential-Access" ;;
+	2) echo "Printer          " ;;
+	3) echo "Processor        " ;;
+	4) echo "WORM             " ;;
+	5) echo "CD-ROM           " ;;
+	6) echo "Scanner          " ;;
+	7) echo "Optical Device   " ;;
+	8) echo "Medium Changer   " ;;
+	9) echo "Communications   " ;;
+	10) echo "Unknown          " ;;
+	11) echo "Unknown          " ;;
+	12) echo "RAID             " ;;
+	13) echo "Enclosure        " ;;
+	14) echo "Direct-Access-RBC" ;;
+	*) echo "Unknown          " ;;
+    esac
+}
+
+print02i()
+{
+    if [ "$1" = "*" ] ; then 
+        echo "00"
+    else
+        printf "%02i" "$1"
+    fi
+}
+
 # Get /proc/scsi/scsi info for device $host:$channel:$id:$lun
 # Optional parameter: Number of lines after first (default = 2), 
 # result in SCSISTR, return code 1 means empty.
 procscsiscsi ()
 {  
   if test -z "$1"; then LN=2; else LN=$1; fi
-  CHANNEL=`printf "%02i" $channel`
-  ID=`printf "%02i" $id`
-  LUN=`printf "%02i" $lun`
+  CHANNEL=`print02i "$channel"`
+  ID=`print02i "$id"`
+  LUN=`print02i "$lun"`
   if [ -d /sys/class/scsi_device ]; then
       SCSIPATH="/sys/class/scsi_device/${host}:${channel}:${id}:${lun}"
       if [ -d  "$SCSIPATH" ] ; then
@@ -89,24 +122,7 @@ $SCSIDEV"
 	  if [ "$LN" -gt 1 ] ; then
 	      ILVL=$(cat ${SCSIPATH}/device/scsi_level)
 	      type=$(cat ${SCSIPATH}/device/type)
-	      case "$type" in
-		  0) ITYPE="Direct-Access    " ;;
-		  1) ITYPE="Sequential-Access" ;;
-		  2) ITYPE="Printer          " ;;
-		  3) ITYPE="Processor        " ;;
-		  4) ITYPE="WORM             " ;;
-		  5) ITYPE="CD-ROM           " ;;
-		  6) ITYPE="Scanner          " ;;
-		  7) ITYPE="Optical Device   " ;;
-		  8) ITYPE="Medium Changer   " ;;
-		  9) ITYPE="Communications   " ;;
-		  10) ITYPE="Unknown          " ;;
-		  11) ITYPE="Unknown          " ;;
-		  12) ITYPE="RAID             " ;;
-		  13) ITYPE="Enclosure        " ;;
-		  14) ITYPE="Direct-Access-RBC" ;;
-		  *) ITYPE="Unknown          " ;;
-	      esac
+	      ITYPE=$(printtype $type)
 	      SCSITMP=$(printf '  Type:   %-16s                ANSI SCSI revision: %02d' "$ITYPE" "$((ILVL - 1))")
 	      SCSISTR="$SCSISTR
 $SCSITMP"
@@ -175,6 +191,7 @@ sgdevice ()
 testonline ()
 {
   : testonline
+  RC=0
   if test ! -x /usr/bin/sg_turs; then return 0; fi
   sgdevice
   if test -z "$SGDEV"; then return 0; fi
@@ -183,7 +200,7 @@ testonline ()
   # echo -e "\e[A\e[A\e[A${yellow}Test existence of $SGDEV = $RC ${norm} \n\n\n"
   if test $RC = 1; then return $RC; fi
   # OK, device online, compare INQUIRY string
-  INQ=`sg_inq $sg_len_arg /dev/$SGDEV`
+  INQ=`sg_inq $sg_len_arg /dev/$SGDEV 2>/dev/null`
   IVEND=`echo "$INQ" | grep 'Vendor identification:' | sed 's/^[^:]*: \(.*\)$/\1/'`
   IPROD=`echo "$INQ" | grep 'Product identification:' | sed 's/^[^:]*: \(.*\)$/\1/'`
   IPREV=`echo "$INQ" | grep 'Product revision level:' | sed 's/^[^:]*: \(.*\)$/\1/'`
@@ -192,20 +209,21 @@ testonline ()
   IPQUAL=`echo "$INQ" | sed -n 's/ *PQual=\([0-9]*\)  Device.*/\1/p'`
   if [ "$IPQUAL" != 0 ] ; then
     echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nLU not available (PQual $IPQUAL)${norm}\n\n\n"
-    return 1
+    return 2
   fi
 
+  TYPE=$(printtype $IPTYPE)
   procscsiscsi
   TMPSTR=`echo "$SCSISTR" | grep 'Vendor:'`
   if [ "$TMPSTR" != "$STR" ]; then
-    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${TMPSTR#* } \nto: $STR ${norm}\n\n\n"
+    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${SCSISTR#* } \nto: $STR ${norm}\n\n\n"
     return 1
   fi
   TMPSTR=`echo "$SCSISTR" | sed -n 's/.*Type: *\(.*\) *ANSI.*/\1/p'`
   if [ $TMPSTR != $TYPE ] ; then
-     echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${TMPSTR} \nto: $TYPE ${norm}\n\n\n"
-     return 1
-  fi  
+    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${TMPSTR} \nto: $TYPE ${norm}\n\n\n"
+    return 1
+  fi
   return $RC
 }
 
@@ -215,7 +233,7 @@ testexist ()
 {
   : testexist
   SCSISTR=
-  if procscsiscsi; then
+  if procscsiscsi && test -z "$1"; then
     echo "$SCSISTR" | head -n1
     echo "$SCSISTR" | tail -n2 | pr -o4 -l1
   fi
@@ -230,6 +248,7 @@ chanlist ()
   local tmpchan
 
   for dev in /sys/class/scsi_device/${host}:* ; do
+    [ -d $dev ] || continue;
     hcil=${dev##*/}
     cil=${hcil#*:}
     chan=${cil%%:*}
@@ -254,6 +273,7 @@ idlist ()
   local tmpid
 
   for dev in /sys/class/scsi_device/${host}:${channel}:* ; do
+    [ -d $dev ] || continue;
     hcil=${dev##*/}
     cil=${hcil#*:}
     il=${cil#*:}
@@ -261,6 +281,7 @@ idlist ()
     for tmpid in $idsearch ; do
       if test "$target" -eq $tmpid ; then
 	target=
+	break
       fi
     done
     if test -n "$target" ; then
@@ -272,10 +293,12 @@ idlist ()
 # Returns the list of existing LUNs
 getluns ()
 {
-  if test ! -x /usr/bin/sg_luns; then return; fi
   sgdevice
   if test -z "$SGDEV"; then return; fi
-  sg_luns -d /dev/$SGDEV | sed -n 's/.*lun=\(.*\)/\1/p'
+  if test ! -x /usr/bin/sg_luns; then echo 0; return; fi
+  LLUN=`sg_luns -d /dev/$SGDEV 2>/dev/null`
+  if test $? != 0; then echo 0; return; fi
+  echo "$LLUN" | sed -n 's/.*lun=\(.*\)/\1/p'
 }
 
 # Perform scan on a single lun
@@ -291,31 +314,36 @@ dolunscan()
     # Device exists: Test whether it's still online
     # (testonline returns 1 if it's gone or has changed)
     testonline
-    if test $? = 1 -o ! -z "$forceremove"; then
+    RC=$?
+    if test $RC != 0 -o ! -z "$forceremove"; then
       echo -en "\r\e[A\e[A\e[A${red}REM: "
       echo "$SCSISTR" | head -n1
       echo -e "${norm}\e[B\e[B"
       if test -e /sys/class/scsi_device/${host}:${channel}:${id}:${lun}/device; then
         echo 1 > /sys/class/scsi_device/${host}:${channel}:${id}:${lun}/device/delete
-        # Try reading, should fail if device is gone
-        echo "$channel $id $lun" > /sys/class/scsi_host/host${host}/scan
+	if test $RC -eq 1 -o $lun -eq 0 ; then
+          # Try readding, should fail if device is gone
+          echo "$channel $id $lun" > /sys/class/scsi_host/host${host}/scan
+	fi
       else
         echo "scsi remove-single-device $devnr" > /proc/scsi/scsi
-        # Try reading, should fail if device is gone
-        echo "scsi add-single-device $devnr" > /proc/scsi/scsi
+	if test $RC -eq 1 -o $lun -eq 0 ; then
+          # Try readding, should fail if device is gone
+          echo "scsi add-single-device $devnr" > /proc/scsi/scsi
+	fi
       fi
     fi
-    if test $RC = 0 ; then
+    if test $RC = 0 -o "$forcerescan" ; then
       if test -e /sys/class/scsi_device/${host}:${channel}:${id}:${lun}/device; then
         echo 1 > /sys/class/scsi_device/${host}:${channel}:${id}:${lun}/device/rescan
       fi
     fi
-
     printf "\r\x1b[A\x1b[A\x1b[A${yellow}OLD: $norm"
     testexist
     if test -z "$SCSISTR"; then
       printf "\r${red}DEL: $norm\r\n\n"
       let rmvd+=1;
+      return 1
     fi
   fi
   if test -z "$SCSISTR"; then
@@ -347,37 +375,36 @@ doreportlun()
   SCSISTR=
   devnr="$host $channel $id $lun"
   echo "Scanning for device $devnr ..."
-  printf "${yellow}OLD: $norm"
-  testexist
+  #printf "${yellow}OLD: $norm"
+  testexist -q
   if test -z "$SCSISTR"; then
     # Device does not exist, try to add
-    printf "\r${green}NEW: $norm"
+    #printf "\r${green}NEW: $norm"
     if test -e /sys/class/scsi_host/host${host}/scan; then
       echo "$channel $id $lun" > /sys/class/scsi_host/host${host}/scan 2> /dev/null
     else
       echo "scsi add-single-device $devnr" > /proc/scsi/scsi
     fi
-    testexist
+    testexist -1
     if test -z "$SCSISTR"; then
       # Device not present
       printf "\r\x1b[A";
       lunsearch=
       return
     fi
+    #testonline
   fi
   lunsearch=`getluns`
   lunremove=
   # Check existing luns
-  for dev in /sys/class/scsi_device/$host\:$channel\:$id\:*; do
+  for dev in /sys/class/scsi_device/${host}:${channel}:${id}:*; do
+    [ -d "$dev" ] || continue
     lun=${dev##*:}
     newsearch=
     oldsearch="$lunsearch"
     for tmplun in $lunsearch; do
       if test $tmplun -eq $lun ; then
-	# Optimization: don't scan lun 0 again
-	if [ $lun -ne 0 ]; then
-	  dolunscan
-	fi
+	dolunscan
       else
 	newsearch="$newsearch $tmplun"
       fi
@@ -405,7 +432,7 @@ dosearch ()
       idlist
     fi
     for id in $idsearch; do
-      if test -z "$lunsearch"; then
+      if test -z "$lunsearch" ; then
 	doreportlun
       else
 	for lun in $lunsearch; do
@@ -416,32 +443,6 @@ dosearch ()
   done
 }
  
-# main
-if test @$1 = @--help -o @$1 = @-h -o @$1 = @-?; then
-    echo "Usage: rescan-scsi-bus.sh [options] [host [host ...]]"
-    echo "Options:"
-    echo " -l      activates scanning for LUNs 0-7    [default: 0]"
-    echo " -L NUM  activates scanning for LUNs 0--NUM [default: 0]"
-    echo " -w      scan for target device IDs 0 .. 15 [default: 0-7]"
-    echo " -c      enables scanning of channels 0 1   [default: 0]"
-    echo " -r      enables removing of devices        [default: disabled]"
-    echo " -i      issue a FibreChannel LIP reset     [default: disabled]"
-    echo "--remove:        same as -r"
-    echo "--issue-lip:     same as -i"
-    echo "--forceremove:   Remove and readd every device (DANGEROUS)"
-    echo "--nooptscan:     don't stop looking for LUNs is 0 is not found"
-    echo "--color:         use coloured prefixes OLD/NEW/DEL"
-    echo "--hosts=LIST:    Scan only host(s) in LIST"
-    echo "--channels=LIST: Scan only channel(s) in LIST"
-    echo "--ids=LIST:      Scan only target ID(s) in LIST"
-    echo "--luns=LIST:     Scan only lun(s) in LIST"  
-    echo " Host numbers may thus be specified either directly on cmd line (deprecated) or"
-    echo " or with the --hosts=LIST parameter (recommended)."
-    echo "LIST: A[-B][,C[-D]]... is a comma separated list of single values and ranges"
-    echo " (No spaces allowed.)"
-    exit 0
-fi
-
 expandlist ()
 {
     list=$1
@@ -463,6 +464,33 @@ expandlist ()
     echo $result
 }
 
+# main
+if test @$1 = @--help -o @$1 = @-h -o @$1 = @-?; then
+    echo "Usage: rescan-scsi-bus.sh [options] [host [host ...]]"
+    echo "Options:"
+    echo " -l      activates scanning for LUNs 0-7    [default: 0]"
+    echo " -L NUM  activates scanning for LUNs 0--NUM [default: 0]"
+    echo " -w      scan for target device IDs 0 .. 15 [default: 0-7]"
+    echo " -c      enables scanning of channels 0 1   [default: 0]"
+    echo " -r      enables removing of devices        [default: disabled]"
+    echo " -i      issue a FibreChannel LIP reset     [default: disabled]"
+    echo "--remove:        same as -r"
+    echo "--issue-lip:     same as -i"
+    echo "--forcerescan:   Rescan existing devices"
+    echo "--forceremove:   Remove and readd every device (DANGEROUS)"
+    echo "--nooptscan:     don't stop looking for LUNs is 0 is not found"
+    echo "--color:         use coloured prefixes OLD/NEW/DEL"
+    echo "--hosts=LIST:    Scan only host(s) in LIST"
+    echo "--channels=LIST: Scan only channel(s) in LIST"
+    echo "--ids=LIST:      Scan only target ID(s) in LIST"
+    echo "--luns=LIST:     Scan only lun(s) in LIST"  
+    echo " Host numbers may thus be specified either directly on cmd line (deprecated) or"
+    echo " or with the --hosts=LIST parameter (recommended)."
+    echo "LIST: A[-B][,C[-D]]... is a comma separated list of single values and ranges"
+    echo " (No spaces allowed.)"
+    exit 0
+fi
+
 if test ! -d /sys/class/scsi_host/ -a ! -d /proc/scsi/; then
   echo "Error: SCSI subsystem not active"
   exit 1
@@ -471,19 +499,22 @@ fi
 # Make sure sg is there
 modprobe sg >/dev/null 2>&1
 
-sg_version=$(sg_inq -V 2>&1 | cut -d " " -f 3)
-sg_version=${sg_version##0.}
-if [ "$sg_version" -lt 70 ] ; then
-    sg_len_arg="-36"
-else
-    sg_len_arg="--len=36"
-fi
+if test -x /usr/bin/sg_inq; then
+    sg_version=$(sg_inq -V 2>&1 | cut -d " " -f 3)
+    sg_version=${sg_version##0.}
+    #echo "\"$sg_version\""
+    if [ -z "$sg_version" -o "$sg_version" -lt 70 ] ; then
+        sg_len_arg="-36"
+    else
+        sg_len_arg="--len=36"
+    fi
+fi    
 
 # defaults
 unsetcolor
 lunsearch=""
 idsearch=`seq 0 7`
-channelsearch="0"
+channelsearch=""
 remove=
 forceremove=
 optscan=1
@@ -505,6 +536,7 @@ while test ! -z "$opt" -a -z "${opt##-*}"; do
     r) remove=1 ;;
     i) lipreset=1 ;;
     -remove)      remove=1 ;;
+    -forcerescan) remove=1; forcerescan=1 ;;
     -forceremove) remove=1; forceremove=1 ;;
     -hosts=*)     arg=${opt#-hosts=};   hosts=`expandlist $arg` ;;
     -channels=*)  arg=${opt#-channels=};channelsearch=`expandlist $arg` ;; 
@@ -524,6 +556,10 @@ if test "@$1" != "@"; then
   hosts=$*; 
 fi
 
+if [ -d /sys/class/scsi_host -a ! -w /sys/class/scsi_host ]; then
+  echo "You need to run scsi-rescan-bus.sh as root"
+  exit 2
+fi  
 echo "Scanning SCSI subsystem for new devices"
 test -z "$remove" || echo " and remove devices that have disappeared"
 declare -i found=0
