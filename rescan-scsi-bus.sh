@@ -20,6 +20,30 @@ unsetcolor ()
   yellow=""; norm=""
 }
 
+# Output some text and return cursor to previous position
+# (only works for simple strings)
+# Stores length of string in LN and returns it
+print_and_scroll_back ()
+{
+  STRG="$1"
+  LN=${#STRG}
+  BK=""
+  declare -i cntr=0
+  while test $cntr -lt $LN; do BK="$BK\e[D"; let cntr+=1; done
+  echo -en "$STRG$BK"
+  return $LN
+}
+
+# Overwrite a text of length $1 (fallback to $LN) with whitespace
+white_out ()
+{
+  BK=""; WH=""
+  if test -n "$1"; then LN=$1; fi
+  declare -i cntr=0
+  while test $cntr -lt $LN; do BK="$BK\e[D"; WH="$WH "; let cntr+=1; done
+  echo -en "$WH$BK"
+}
+
 # Return hosts. sysfs must be mounted
 findhosts_26 ()
 {
@@ -199,12 +223,18 @@ testonline ()
   RC=$?
   # Handle in progress of becoming ready and unit attention -- wait at max 11s
   declare -i ctr=0
-  while test $RC = 2 -o $RC = 6 && test $ctr -le 10; do
-    if test $RC = 2; then sleep 1; fi
+  if test $RC = 2 -o $RC = 6; then 
+    RMB=`sg_inq /dev/$SGDEV | grep 'RMB=' | sed 's/^.*RMB=\(.\).*$/\1/'`
+    print_and_scroll_back "$host:$channel:$id:$lun $SGDEV ($RMB) "
+  fi
+  while test $RC = 2 -o $RC = 6 && test $ctr -le 8; do
+    if test $RC = 2 -a "$RMB" != "1"; then echo -n "."; let $LN+=1; sleep 1
+    else usleep 20000; fi
     let ctr+=1
     sg_turs /dev/$SGDEV >/dev/null 2>&1
     RC=$?
   done
+  if test $ctr != 0; then white_out; fi
   # echo -e "\e[A\e[A\e[A${yellow}Test existence of $SGDEV = $RC ${norm} \n\n\n"
   if test $RC = 1; then return $RC; fi
   # Reset RC (might be !=0 for passive paths)
@@ -272,6 +302,7 @@ chanlist ()
       channelsearch="$channelsearch $chan"
     fi
   done
+  if test -z "$channelsearch"; then channelsearch="0"; fi
 }
 
 # Returns the list of existing targets per host
@@ -316,7 +347,13 @@ getluns()
 # Wait for udev to settle (create device nodes etc.)
 udevadm_settle()
 {
-  if test -x /sbin/udevadm; then /sbin/udevadm settle; fi
+  if test -x /sbin/udevadm; then 
+    print_and_scroll_back " Calling udevadm settle (can take a while) "
+    /sbin/udevadm settle
+    white_out
+  else
+    usleep 20000
+  fi
 }
 
 # Perform scan on a single lun $host $channel $id $lun
@@ -324,7 +361,7 @@ dolunscan()
 {
   SCSISTR=
   devnr="$host $channel $id $lun"
-  echo "Scanning for device $devnr ..."
+  echo "Scanning for device $devnr ... "
   printf "${yellow}OLD: $norm"
   testexist
   # Special case: lun 0 just got added (for reportlunscan),
@@ -349,7 +386,9 @@ dolunscan()
           # Try readding, should fail if device is gone
           echo "$channel $id $lun" > /sys/class/scsi_host/host${host}/scan
 	fi
-	udevadm_settle
+	# FIXME: Can we skip udevadm settle for removal?
+	#udevadm_settle
+	usleep 20000
       else
         echo "scsi remove-single-device $devnr" > /proc/scsi/scsi
 	if test $RC -eq 1 -o $lun -eq 0 ; then
@@ -364,7 +403,7 @@ dolunscan()
 	udevadm_settle
       fi
     fi
-    printf "\r\x1b[A\x1b[A\x1b[A${yellow}OLD: $norm"
+    printf "\r\e[A\e[A\e[A${yellow}OLD: $norm"
     testexist
     if test -z "$SCSISTR"; then
       printf "\r${red}DEL: $norm\r\n\n"
@@ -384,7 +423,7 @@ dolunscan()
     testexist
     if test -z "$SCSISTR"; then
       # Device not present
-      printf "\r\x1b[A";
+      printf "\r\e[A";
       # Optimization: if lun==0, stop here (only if in non-remove mode)
       if test $lun = 0 -a -z "$remove" -a $optscan = 1; then 
         break;
@@ -510,10 +549,10 @@ expandlist ()
 if test @$1 = @--help -o @$1 = @-h -o @$1 = @-?; then
     echo "Usage: rescan-scsi-bus.sh [options] [host [host ...]]"
     echo "Options:"
-    echo " -l      activates scanning for LUNs 0-7    [default: 0]"
+    echo " -l      activates scanning for LUNs 0--7   [default: 0]"
     echo " -L NUM  activates scanning for LUNs 0--NUM [default: 0]"
-    echo " -w      scan for target device IDs 0 .. 15 [default: 0-7]"
-    echo " -c      enables scanning of channels 0 1   [default: 0]"
+    echo " -w      scan for target device IDs 0--15   [default: 0--7]"
+    echo " -c      enables scanning of channels 0 1   [default: 0 / all detected ones]"
     echo " -r      enables removing of devices        [default: disabled]"
     echo " -i      issue a FibreChannel LIP reset     [default: disabled]"
     echo "--remove:        same as -r"
@@ -526,6 +565,11 @@ if test @$1 = @--help -o @$1 = @-h -o @$1 = @-?; then
     echo "--channels=LIST: Scan only channel(s) in LIST"
     echo "--ids=LIST:      Scan only target ID(s) in LIST"
     echo "--luns=LIST:     Scan only lun(s) in LIST"  
+    echo "--sync/nosync:   Issue a sync / no sync [default: sync if remove]"
+    echo "--attachpq3:     Tell kernel to attach sg to LUN 0 that reports PQ=3"
+    echo "--reportlun2:    Tell kernel to try REPORT_LUN even on SCSI2 devices"
+    echo "--largelun:      Tell kernel to support LUNs > 7 even on SCSI2 devs"
+    echo "--sparselun:     Tell kernel to support sparse LUN numbering"
     echo " Host numbers may thus be specified either directly on cmd line (deprecated) or"
     echo " or with the --hosts=LIST parameter (recommended)."
     echo "LIST: A[-B][,C[-D]]... is a comma separated list of single values and ranges"
@@ -560,6 +604,8 @@ opt_channelsearch=
 remove=
 forceremove=
 optscan=1
+sync=1
+declare -i scan_flags=0
 if test -d /sys/class/scsi_host; then 
   findhosts_26
 else  
@@ -587,6 +633,12 @@ while test ! -z "$opt" -a -z "${opt##-*}"; do
     -color) setcolor ;;
     -nooptscan) optscan=0 ;;
     -issue-lip) lipreset=1 ;;
+    -sync) sync=2 ;;
+    -nosync) sync=0 ;;
+    -attachpq3) scan_flags=$(($scan_flags|0x1000000)) ;;
+    -reportlun2) scan_flags=$(($scan_flags|0x20000)) ;;
+    -largelun) scan_flags=$(($scan_flags|0x200)) ;;
+    -sparselun) scan_flags=$((scan_flags|0x40)) ;;
     *) echo "Unknown option -$opt !" ;;
   esac
   shift
@@ -601,6 +653,19 @@ fi
 if [ -d /sys/class/scsi_host -a ! -w /sys/class/scsi_host ]; then
   echo "You need to run scsi-rescan-bus.sh as root"
   exit 2
+fi  
+if test "$sync" = 1 -a "$remove" = 1; then sync=2; fi
+if test "$sync" = 2; then echo "Syncing file systems"; sync; fi
+if test -w /sys/module/scsi_mod/parameters/default_dev_flags -a $scan_flags != 0; then
+  OLD_SCANFLAGS=`cat /sys/module/scsi_mod/parameters/default_dev_flags`
+  NEW_SCANFLAGS=$(($OLD_SCANFLAGS|$scan_flags))
+  if test "$OLD_SCANFLAGS" != "$NEW_SCANFLAGS"; then
+    echo -n "Temporarily setting kernel scanning flags from "
+    printf "0x%08x to 0x%08x\n" $OLD_SCANFLAGS $NEW_SCANFLAGS
+    echo $NEW_SCANFLAGS > /sys/module/scsi_mod/parameters/default_dev_flags
+  else
+    unset OLD_SCANFLAGS
+  fi
 fi  
 echo "Scanning SCSI subsystem for new devices"
 test -z "$remove" || echo " and remove devices that have disappeared"
@@ -636,6 +701,9 @@ for host in $hosts; do
   fi
   dosearch
 done
+if test -n "$OLD_SCANFLAGS"; then
+  echo $OLD_SCANFLAGS > /sys/module/scsi_mod/parameters/default_dev_flags
+fi
 echo "$found new device(s) found.               "
 echo "$rmvd device(s) removed.                 "
 
