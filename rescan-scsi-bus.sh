@@ -1,8 +1,8 @@
 #!/bin/bash
 # Skript to rescan SCSI bus, using the 
 # scsi add-single-device mechanism
-# (w) 1998-03-19 Kurt Garloff <kurt@garloff.de> (c) GNU GPL
-# (w) 2003-07-16 Kurt Garloff <garloff@suse.de> (c) GNU GPL
+# (c) 1998--2008 Kurt Garloff <kurt@garloff.de>, GNU GPL v2 or later
+# (c) 2006--2008 Hannes Reinecke, GNU GPL v2 or later
 # $Id$
 
 setcolor ()
@@ -39,7 +39,8 @@ findhosts_26 ()
     fi
     hosts="$hosts $hostno"
     echo "Host adapter $hostno ($hostname) found."
-  done  
+  done
+  hosts=`echo $hosts | sed 's/ /\n/g' | sort -n`
 }
 
 # Return hosts. /proc/scsi/HOSTADAPTER/? must exist
@@ -182,17 +183,29 @@ testonline ()
   # echo -e "\e[A\e[A\e[A${yellow}Test existence of $SGDEV = $RC ${norm} \n\n\n"
   if test $RC = 1; then return $RC; fi
   # OK, device online, compare INQUIRY string
-  INQ=`sg_inq -36 /dev/$SGDEV`
+  INQ=`sg_inq $sg_len_arg /dev/$SGDEV`
   IVEND=`echo "$INQ" | grep 'Vendor identification:' | sed 's/^[^:]*: \(.*\)$/\1/'`
   IPROD=`echo "$INQ" | grep 'Product identification:' | sed 's/^[^:]*: \(.*\)$/\1/'`
   IPREV=`echo "$INQ" | grep 'Product revision level:' | sed 's/^[^:]*: \(.*\)$/\1/'`
   STR=`printf "  Vendor: %-08s Model: %-16s Rev: %-4s" "$IVEND" "$IPROD" "$IPREV"`
-  procscsiscsi
-  SCSISTR=`echo "$SCSISTR" | grep 'Vendor:'`
-  if [ "$SCSISTR" != "$STR" ]; then
-    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${SCSISTR#* } \nto: $STR ${norm}\n\n\n"
+  IPTYPE=`echo "$INQ" | sed -n 's/.* Device_type=\([0-9]*\) .*/\1/p'`
+  IPQUAL=`echo "$INQ" | sed -n 's/ *PQual=\([0-9]*\)  Device.*/\1/p'`
+  if [ "$IPQUAL" != 0 ] ; then
+    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nLU not available (PQual $IPQUAL)${norm}\n\n\n"
     return 1
   fi
+
+  procscsiscsi
+  TMPSTR=`echo "$SCSISTR" | grep 'Vendor:'`
+  if [ "$TMPSTR" != "$STR" ]; then
+    echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${TMPSTR#* } \nto: $STR ${norm}\n\n\n"
+    return 1
+  fi
+  TMPSTR=`echo "$SCSISTR" | sed -n 's/.*Type: *\(.*\) *ANSI.*/\1/p'`
+  if [ $TMPSTR != $TYPE ] ; then
+     echo -e "\e[A\e[A\e[A\e[A${red}$SGDEV changed: ${bold}\nfrom:${TMPSTR} \nto: $TYPE ${norm}\n\n\n"
+     return 1
+  fi  
   return $RC
 }
 
@@ -259,9 +272,9 @@ idlist ()
 # Returns the list of existing LUNs
 getluns ()
 {
-  if test ! -x /usr/bin/sg_luns; then return ""; fi
+  if test ! -x /usr/bin/sg_luns; then return; fi
   sgdevice
-  if test -z "$SGDEV"; then return ""; fi
+  if test -z "$SGDEV"; then return; fi
   sg_luns -d /dev/$SGDEV | sed -n 's/.*lun=\(.*\)/\1/p'
 }
 
@@ -292,6 +305,12 @@ dolunscan()
         echo "scsi add-single-device $devnr" > /proc/scsi/scsi
       fi
     fi
+    if test $RC = 0 ; then
+      if test -e /sys/class/scsi_device/${host}:${channel}:${id}:${lun}/device; then
+        echo 1 > /sys/class/scsi_device/${host}:${channel}:${id}:${lun}/device/rescan
+      fi
+    fi
+
     printf "\r\x1b[A\x1b[A\x1b[A${yellow}OLD: $norm"
     testexist
     if test -z "$SCSISTR"; then
@@ -386,7 +405,7 @@ dosearch ()
       idlist
     fi
     for id in $idsearch; do
-      if test -z $lunsearch ; then
+      if test -z "$lunsearch"; then
 	doreportlun
       else
 	for lun in $lunsearch; do
@@ -444,13 +463,21 @@ expandlist ()
     echo $result
 }
 
-if test ! -d /proc/scsi/; then
+if test ! -d /sys/class/scsi_host/ -a ! -d /proc/scsi/; then
   echo "Error: SCSI subsystem not active"
   exit 1
 fi	
 
 # Make sure sg is there
 modprobe sg >/dev/null 2>&1
+
+sg_version=$(sg_inq -V 2>&1 | cut -d " " -f 3)
+sg_version=${sg_version##0.}
+if [ "$sg_version" -lt 70 ] ; then
+    sg_len_arg="-36"
+else
+    sg_len_arg="--len=36"
+fi
 
 # defaults
 unsetcolor
