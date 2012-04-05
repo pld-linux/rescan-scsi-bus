@@ -3,7 +3,7 @@ Summary(pl.UTF-8):	Ponowne skanowanie szyny SCSI pod Linuksem
 Name:		rescan-scsi-bus
 Version:	1.56
 Release:	1
-License:	GPL
+License:	GPL v2 or GPL v3
 Group:		Applications/System
 # http://www.garloff.de/kurt/linux/rescan-scsi-bus.sh (with changed CVS tag)
 Source0:	%{name}.sh
