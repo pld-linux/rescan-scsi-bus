@@ -3,7 +3,7 @@
 # scsi add-single-device mechanism
 # (c) 1998--2010 Kurt Garloff <kurt@garloff.de>, GNU GPL v2 or v3
 # (c) 2006--2008 Hannes Reinecke, GNU GPL v2 or later
-# $Id$
+# $Id: rescan-scsi-bus.sh,v 1.56 2012/01/14 22:23:53 garloff Exp $
 
 SCAN_WILD_CARD=4294967295
 
