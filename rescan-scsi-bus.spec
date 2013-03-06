@@ -2,13 +2,14 @@ Summary:	Rescan SCSI bus in Linux
 Summary(pl.UTF-8):	Ponowne skanowanie szyny SCSI pod Linuksem
 Name:		rescan-scsi-bus
 Version:	1.56
-Release:	1
+Release:	2
 License:	GPL v2 or GPL v3
 Group:		Applications/System
 # http://www.garloff.de/kurt/linux/rescan-scsi-bus.sh (with changed CVS tag)
 Source0:	%{name}.sh
+Patch0:		sg_inq-0.70.patch
 URL:		http://www.garloff.de/kurt/linux/#rescan-scsi
-Requires:	sg3_utils
+Requires:	sg3_utils >= 0.70
 Obsoletes:	scsiutils
 BuildArch:	noarch
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
@@ -45,6 +46,7 @@ wyłączeniem.
 %prep
 %setup -qcT
 install -p %{SOURCE0} .
+%patch0 -p1
 
 %install
 rm -rf $RPM_BUILD_ROOT
